@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+coverage/
+playwright-report/
+playwright/.cache/
+test-results/
+.eslintcache
+_bmad/.cache/
+.DS_Store
+*.log
+.vite/

@@ -74,4 +74,69 @@ Fix: renamed the directory to `_bmad-output` and substituted the placeholder in 
 
 ---
 
-(Future steps will append below.)
+## Step 2 — Build the application (E1 + E2 + E3)
+
+### Tooling used in Step 2
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| Claude Code (Opus 4.7) | End-to-end implementation against the BMAD-generated stories | Worked from `_bmad-output/planning-artifacts/stories/E1-*.md` directly; E2 and E3 stories were drafted just-in-time per the plan |
+| Drizzle Kit | DB schema → SQL migration | `npx drizzle-kit generate --name init` produced `0000_init.sql`; matched the architecture ERD on the first pass |
+| Testcontainers (`@testcontainers/postgresql`) | Ephemeral PG per integration test run | Required `TESTCONTAINERS_RYUK_DISABLED=true` on Docker Desktop for macOS — Ryuk reaper fails to start; documented as setup file |
+| `docker run postgres:16-alpine` (port 5434) | Local PG for E2E run | Step 4 will replace this with a Compose-managed db service |
+| Playwright (Chromium) | E2E + a11y via `@axe-core/playwright` | webServer config spawns api (`tsx watch`) and vite dev server in parallel |
+
+### Implementation log (per epic)
+
+#### E1 — Project scaffolding (5 stories)
+
+- **What worked:** The story files from Step 1 were detailed enough that scaffolding was almost mechanical: each story named the exact files, scripts, and configs to add. Total time on E1 was small.
+- **What didn't:** Default Vitest `include` patterns picked up Playwright `*.spec.ts` files in `tests/e2e/`. Required explicit `exclude` in `vitest.config.ts`. Caught immediately by the first `npm test` run.
+- **AI miss:** I initially set `rootDir: "./src"` in both `packages/api/tsconfig.json` and `packages/web/tsconfig.json`. That rejects sibling `tests/` files (E2E specs and integration test helpers). Removed `rootDir`. Story-level ACs didn't anticipate this — would update them.
+
+#### E2 — Backend API
+
+- **What worked:** Architecture's ADRs translated 1:1 into code. ADR-1 (Drizzle): `drizzle-kit generate` matched the ERD. ADR-3 (custom error envelope): single `errors.ts` + Fastify `setErrorHandler` covered every path. ADR-4 (`/healthz` always 200): made Compose's `depends_on: service_healthy` viable. Coverage: 87.34% line.
+- **What didn't:** `pool.end()` was called twice when an integration test deliberately ended the pool to test `db: down`. Cleanup needed to be idempotent. Captured in `test-app.ts` helper.
+- **Surprise:** Fastify rejects DELETE requests when the client sends `Content-Type: application/json` with no body (`FST_ERR_CTP_EMPTY_JSON_BODY`). Discovered only via Playwright — the integration tests use `app.inject()` which doesn't auto-set Content-Type, so they passed. **The integration tests didn't catch this; the E2E did.** Reinforces why both layers exist.
+
+#### E3 — Frontend UI
+
+- **What worked:** The split between TanStack Query (cache) and per-mutation optimistic onMutate was clean. The architecture's ADR-2 anticipated this. React 19's `useOptimistic` *wasn't* used in the end — TanStack Query's onMutate covered the same need with less plumbing for this small surface. Logging this as an architecture amendment: ADR-2 should be revised in a future iteration.
+- **What didn't:**
+  1. Testing Library's auto-cleanup didn't run between tests — the React 19 + Vitest 3 combination requires an explicit `afterEach(cleanup)` in the test setup file. Caused 7 cascading "found multiple elements" failures until added.
+  2. Playwright's `.check()` action validates the checkbox state synchronously after click. With a controlled checkbox + async onMutate, the optimistic state update is a microtask later — so `.check()` saw the unchecked state and errored. Switched to `.click()` plus a visual-class assertion.
+- **AI miss:** I included a `logger` field in `QueryClient` config (a v4 API removed in v5). TS caught it on the first typecheck.
+
+### MCP servers used in Step 2
+
+None invoked. The work was straightforward enough that direct file edits + bash commands sufficed. Step 4's QA pass will use Chrome DevTools MCP for performance auditing.
+
+### What AI didn't / couldn't do well in Step 2
+
+- **Predict the Fastify empty-body issue.** The error pattern is well-known but only triggers from a real fetch client, not Fastify's `inject()`. Would have required exhaustively reasoning about Content-Type semantics up-front.
+- **Anticipate the controlled-checkbox + optimistic-update timing.** Common gotcha in async-React + Playwright; not in Drizzle/Fastify/Vite docs.
+- **Pick perfect default versions in package.json.** `@types/node` versions kept drifting and `tsx watch` had transitive deprecation warnings.
+
+### Where human expertise was load-bearing in Step 2
+
+- Catching that `rootDir` would reject sibling tests folders.
+- Recognising the Ryuk reaper issue from prior Testcontainers + macOS history.
+- Diagnosing the `Content-Type` 400 from a Fastify log line — would have taken much longer purely from the Playwright failure message.
+- Knowing to reach for `afterEach(cleanup)` rather than chasing JSDOM globals.
+
+### Step 2 verification (run on 2026-04-27)
+
+| Check | Result |
+|---|---|
+| `npm run lint` | ✓ clean |
+| `npm run typecheck` | ✓ all three workspaces |
+| `npm test` (60 unit/integration tests) | ✓ 14 shared + 27 api + 19 web |
+| `npm run test:e2e` (8 specs: 6 functional + 2 a11y) | ✓ all pass |
+| API line coverage | 87.34 % (≥70 % threshold) |
+| Web line coverage | 96.29 % (≥70 % threshold) |
+| Critical axe-core a11y violations | 0 |
+
+---
+
+(Steps 3 & 4 will append below.)

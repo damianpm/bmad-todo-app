@@ -4,6 +4,17 @@ A single-user, full-stack Todo app — React 19 SPA, Fastify API, PostgreSQL —
 
 The product surface is intentionally small (list / add / toggle / delete). The repo's interest is in *how* it was built: PRD → architecture → epics → stories → code → containers → QA, with each phase produced by a different BMAD agent persona and the trail captured in `docs/ai-integration-log.md`.
 
+![Todo app with mixed active and completed items](./docs/media/02-mixed-state.png)
+
+<details>
+<summary>More views — empty state and mobile</summary>
+
+| Empty state | Mobile (390 × 740) |
+|---|---|
+| ![Empty state — no todos yet](./docs/media/01-empty-state.png) | ![Mobile responsive layout](./docs/media/03-mobile.png) |
+
+</details>
+
 ---
 
 ## Quick start

@@ -139,4 +139,136 @@ None invoked. The work was straightforward enough that direct file edits + bash 
 
 ---
 
-(Steps 3 & 4 will append below.)
+## Step 3 — Containerization (Epic E4)
+
+### Tooling used in Step 3
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| Claude Code (Opus 4.7) | Authored Dockerfiles, compose files, nginx config, persistence script; ran the smoke validation end-to-end | Auto mode |
+| Docker 29.4 + Compose v5.1 | Local runtime | macOS host |
+| `node:24-alpine` | Base for api runtime + dev images | |
+| `nginx:1.27-alpine` | Production web tier (static SPA + reverse proxy) | |
+| `mcr.microsoft.com/playwright:v1.48.0-jammy` | E2E runner image (browsers preinstalled) | Used by `docker-compose.test.yml` |
+| `postgres:16-alpine` | Database | Named volume `bmad_todo_db_data` for persistence |
+
+### Implementation log
+
+#### E4-S1 — api Dockerfile
+
+- **Decision recorded here, not in architecture:** run the api via `node --import tsx/esm src/server.ts` in production instead of compiling to `dist/`. Why: the `@bmad-todo/shared` package's `main` points at `src/index.ts`, so a `tsc` build of api would still need shared compiled or bundled. Running with `tsx` keeps the runtime story uniform with dev (`tsx watch`) and avoids a bundler decision that the architecture didn't take. `tsx` was moved from devDeps to deps to make the `--omit=dev` install valid.
+- **Multi-stage:** `deps` (npm ci --omit=dev across all workspaces) → `runtime` (copy node_modules + source, `USER node`, `wget /healthz` healthcheck).
+- **Migrations on startup:** unchanged from `src/server.ts` — `runMigrations()` runs before `app.listen()`. ADR-5 honored as-is.
+
+#### E4-S2 — web Dockerfile + nginx.conf
+
+- **Architecture said only `web` is exposed to the host.** That implies a same-origin story for the browser: nginx serves the SPA *and* reverse-proxies `/api/*` to `api:3000`. `proxy_pass http://api:3000/;` (trailing slash) strips the `/api` prefix on the way through. SPA's `VITE_API_BASE_URL=/api` is set as a build arg.
+- **Side effect (positive):** because the browser sees same-origin for both SPA and API, CORS is never evaluated in the production path. The api still defaults `CORS_ORIGIN=http://localhost:8080` for defense-in-depth and for the dev workflow where Vite at :5173 talks to api at :3000.
+- **SPA fallback** via `try_files $uri $uri/ /index.html`. Hashed assets get `Cache-Control: public, immutable`; `index.html` gets `no-store`.
+
+#### E4-S3 — docker-compose.yml
+
+- Only `web` published (`8080:80`). `api` and `db` remain on the default user-defined bridge.
+- `depends_on: { condition: service_healthy }` for both `api → db` and `web → api`.
+- `POSTGRES_PASSWORD` is a required interpolation (`:?POSTGRES_PASSWORD is required`) — fails fast if the user hasn't set it, instead of starting Postgres with an empty password.
+- Named volume `bmad_todo_db_data` mounted at `/var/lib/postgresql/data`.
+
+#### E4-S4 — Dev overlay (`docker-compose.dev.yml`)
+
+- Separate `Dockerfile.dev` per service that installs *all* deps (devDeps included) so `tsx watch` and `vite` are available.
+- Bind mounts: only the source paths, not the whole package — preserves the in-image `node_modules`. `CHOKIDAR_USEPOLLING=true` for reliable file watching on macOS bind mounts.
+- Web exposes `5173`, api exposes `3000`; SPA hits api directly via `VITE_API_BASE_URL=http://localhost:3000` in dev (CORS allowed by the api default).
+
+#### E4-S5 — Test overlay (`docker-compose.test.yml`) + `Dockerfile.e2e`
+
+- Added `E2E_EXTERNAL_STACK=1` env flag in `playwright.config.ts` to skip Playwright's own `webServer` when the api/web are already up under Compose. Without this, the runner would try to spawn its own dev servers inside the runner container.
+- `e2e` service depends on `web` *and* `api` being healthy; uses `--exit-code-from e2e` so CI bubbles the playwright result.
+
+#### E4-S6 — Persistence script (`scripts/test-persistence.sh`)
+
+- Bash script that scripts the full lifecycle: `down -v` → `up --build` → wait healthy → `POST /api/todos` with a timestamped marker → `down` (preserve volume) → `up` → wait healthy → `GET /api/todos` and assert marker present.
+- Runs against the host-published `web` port (`localhost:8080/api/...`). Architecture said the persistence test was an "E2E test"; doing it as a script (not a Playwright spec) was a deliberate scope call — driving compose lifecycle from inside Playwright is a fight, and a script with `set -euo pipefail` is the right tool.
+
+### What worked / didn't / surprises in Step 3
+
+- **Worked:** the architecture's nginx-as-reverse-proxy decision is the keystone — once that's nailed down everything else (CORS, port exposure, env var choice) follows. Compose `depends_on: service_healthy` plus the api's `/healthz` probe (which always returns 200, ADR-4) gave clean startup ordering on the first try.
+- **Didn't (fixed):** initial instinct was to bundle the api with esbuild, then with `tsc`, then to compile shared separately. Each option had a small wart. The `tsx`-in-prod path was the simplest *and* the closest to dev. Captured here because the architecture didn't take a position on the build mode; future maintainers should know.
+- **Surprise:** Compose `--exit-code-from e2e` requires `--abort-on-container-exit` — the README has both, would have wasted a few minutes otherwise.
+- **AI miss:** initially placed `.dockerignore` inside `packages/api/`. Build context is the repo root, so Docker ignored it. Caught at validation time, moved to root and broadened patterns.
+
+### Where human expertise was load-bearing in Step 3
+
+- Recognising that "only `web` exposed" implies an nginx reverse-proxy rather than baking the api host into the SPA bundle. The architecture states the constraint but doesn't spell out the proxy pattern.
+- Anticipating that the `tsc -b` step in `packages/web/build` would emit unwanted JS — the Dockerfile bypasses it with `npx vite build` directly.
+- Choosing to move `tsx` from devDeps to deps rather than running `npm ci` without `--omit=dev` in the runtime image (smaller image, principle-of-least-privilege).
+
+### Step 3 verification (run on 2026-04-29)
+
+| Check | Result |
+|---|---|
+| `docker compose config` (prod, dev, test overlays) | ✓ all three validate |
+| `docker compose build` | ✓ both images |
+| `scripts/test-persistence.sh` | ✓ marker survived `down → up` |
+| Stack startup ordering | ✓ `db (Healthy) → api (Healthy) → web (Started)` |
+| Browser → SPA → `/api` proxy → api → db round-trip | ✓ via persistence-script POST/GET |
+
+---
+
+## Step 4 — QA & Hardening (Epic E5)
+
+### Tooling used in Step 4
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| Vitest v8 coverage | Threshold gating (70% line/branch/function/statement) | Already wired during Step 2; verified in Step 4 |
+| `@axe-core/playwright` | a11y assertion as part of E2E | Already integrated; runs against empty + populated views |
+| Claude Code (Opus 4.7) | README authoring; AI integration log finalization | This document |
+
+### Implementation log
+
+#### E5-S1 — Coverage thresholds + report
+
+- Already configured in Step 2 (`packages/api/vitest.config.ts`, `packages/web/vitest.config.ts`).
+- Re-run on 2026-04-29: api 87.34% line / 78.37% branch / 27 tests pass; web 96.29% line / 89.65% branch / 19 tests pass; shared 100% / 14 tests pass. All thresholds satisfied.
+
+#### E5-S2 — axe-core integration
+
+- Already integrated in `packages/web/tests/e2e/a11y.spec.ts` (Step 2). Two specs: empty state and populated list. Both filter on `impact === "critical"` and assert zero. Tags: `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`.
+
+#### E5-S3 — Lighthouse perf audit
+
+- **Deferred.** Architecture's "Lighthouse via Chrome DevTools MCP" pathway requires that MCP server to be enabled in the session. Not enabled when this step ran. To complete: enable Chrome DevTools MCP, run a Lighthouse audit against `http://localhost:8080`, capture the numbers in `docs/qa/performance.md`. NFR-3 (TTI < 2s on a mid-range laptop) is the gate.
+
+#### E5-S4 — Security review
+
+- **Deferred.** Plan is to invoke `bmad-code-review` against the recent diff (api error handling, Drizzle parametrization, CORS, nginx proxy, secrets-in-env). Findings will land in `docs/qa/security.md`.
+
+#### E5-S5 — AI integration log finalization
+
+- This document. Step 3 + Step 4 sections appended.
+
+#### E5-S6 — README
+
+- `README.md` written. Sections: quick start, local dev, hot-reload via Compose, testing matrix, e2e against the containerized stack, persistence check, architecture-in-one-paragraph, repo layout, env var matrix, AI integration pointer.
+
+### What AI didn't / couldn't do well in Step 4
+
+- **Run Lighthouse without an MCP server.** Even with a running stack and a reachable port, there is no built-in audit tool — requires either Chrome DevTools MCP or a manual `npx lighthouse` run + JSON capture.
+- **Self-evaluate security.** I can run `bmad-code-review`, but the value of an adversarial review depends on the reviewer being a different model run with a fresh window. A self-review tends to confirm what was just written.
+
+### Where human expertise will be load-bearing in Step 4 (still ahead)
+
+- Triaging the security findings from `bmad-code-review` — some will be principle-of-least-privilege nits (run nginx as non-root user, drop capabilities) and need a judgment call between cost-of-change and value-of-fix.
+- Choosing whether the Lighthouse perf number is acceptable — `useOptimistic` was deferred in favor of TanStack Query optimistic mutations (Step 2 finding), so first-paint metrics may differ from what the architecture anticipated.
+
+### Step 4 verification (run on 2026-04-29)
+
+| Check | Result |
+|---|---|
+| `npm run test:coverage` (all workspaces) | ✓ shared 100%, api 87.34%, web 96.29%; 60 tests |
+| Coverage thresholds (70% gate) | ✓ all pass |
+| axe-core critical violations on `/` | ✓ 0 (Step 2 result; not re-run, surface unchanged) |
+| `README.md` | ✓ committed |
+| AI integration log | ✓ Step 3 + Step 4 sections appended |
+| Lighthouse perf | ⏳ pending Chrome DevTools MCP |
+| Security review | ⏳ pending `bmad-code-review` invocation |

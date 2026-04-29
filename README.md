@@ -46,17 +46,34 @@ docker compose down -v
 
 ## Local development (without Docker)
 
-Requires Node 24+ and a Postgres instance reachable from your machine.
+Requires Node 24+ and a Postgres instance reachable from your machine. The api's `dev` and `db:migrate` scripts auto-load `.env` via Node's `--env-file-if-exists=../../.env`, so you don't need a global env exporter.
 
 ```bash
+# 1. install deps
 npm install
-cp .env.example .env       # adjust DATABASE_URL if needed
+
+# 2. spin up just Postgres (api + web run on the host)
+docker run -d --name todos-pg \
+  -e POSTGRES_USER=todos -e POSTGRES_DB=todos -e POSTGRES_PASSWORD=devpw \
+  -p 5432:5432 postgres:16-alpine
+
+# 3. configure .env — DATABASE_URL password must match POSTGRES_PASSWORD above
+cp .env.example .env
+# edit .env: set DATABASE_URL=postgres://todos:devpw@localhost:5432/todos
+
+# 4. apply migrations and run
 npm run -w @bmad-todo/api db:migrate
-npm run -w @bmad-todo/api dev      # api on :3000
-npm run -w @bmad-todo/web dev      # SPA on :5173
+npm run -w @bmad-todo/api dev      # api on :3000, tsx watch
+npm run -w @bmad-todo/web dev      # SPA on :5173, vite (auto-binds 0.0.0.0)
 ```
 
-The Vite dev server reads `VITE_API_BASE_URL=http://localhost:3000` so the SPA hits the api directly. `CORS_ORIGIN` is a comma-separated allowlist; the example covers `:8080` (prod nginx) and `:5173` (vite local). If you access the dev SPA from another device via the LAN URL vite prints, add that origin to the list and restart the api.
+The Vite dev server reads `VITE_API_BASE_URL=http://localhost:3000` so the SPA hits the api directly. `CORS_ORIGIN` is a comma-separated allowlist; the example covers `:8080` (prod nginx) and `:5173` (vite local). If you access the dev SPA from another device via the LAN URL vite prints (e.g. `http://192.168.0.x:5173`), append that origin to `CORS_ORIGIN` in `.env` and restart the api — the request will otherwise be blocked.
+
+Common stumbles when running this path fresh:
+
+- **`invalid environment: DATABASE_URL: Required`** — the script loads `../../.env` relative to `packages/api/`. Make sure `.env` exists at the repo root, not inside the workspace.
+- **`password authentication failed for user "todos"`** — the password in `.env`'s `DATABASE_URL` doesn't match the Postgres container. Recreate the container with the right password (`docker rm -f todos-pg` and the `docker run` above), or edit `.env` to match.
+- **CORS rejection from a LAN-IP browser** — see the paragraph above; add the LAN origin to `CORS_ORIGIN` and restart the api. If you also want to access the api from another device, set `BIND_HOST=0.0.0.0` and `VITE_API_BASE_URL=http://<lan-ip>:3000`.
 
 ### Hot-reload via Compose
 
@@ -66,7 +83,7 @@ If you'd rather develop inside containers (matching the prod toolchain) but with
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
-Source is bind-mounted; `tsx watch` and `vite` pick up changes.
+Source is bind-mounted; `tsx watch` and `vite` pick up changes. The dev overlay maps host `8080` → vite (5173 internal) for the SPA and `3000` → api directly. The dev overlay uses `ports: !override` on the web service so the base compose's `8080:80` (nginx) doesn't merge with the dev mapping — without that override, the same host port would be bound twice and Compose would error with "port is already allocated".
 
 ---
 

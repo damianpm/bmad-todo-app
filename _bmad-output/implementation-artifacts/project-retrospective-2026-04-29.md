@@ -178,3 +178,20 @@ The headline insight from this build: **agent-driven delivery becomes legible wh
 The headline frustration: session-lifecycle limitations cost iteration time twice (skills in Step 1, MCP in Step 4). It's a structural property of Claude Code, not BMAD specifically, but a single line in the BMAD install output ("`/clear` your session before using newly installed skills") would fix it for all users.
 
 End of retrospective.
+
+---
+
+## Postscript (2026-04-29, same day)
+
+Within hours of filing this retrospective, exercising the README's local-dev path and the dev overlay end-to-end surfaced **four latent defects** that the E5 verification matrix did not catch:
+
+1. Dev overlay merged `ports:` lists instead of replacing them — fixed via `ports: !override`
+2. Local-dev `npm run -w @bmad-todo/api dev` never loaded `.env` — fixed via `--env-file-if-exists`
+3. `CORS_ORIGIN` was single-origin only, blocking the LAN URL vite displays by default — fixed via comma-separated allowlist
+4. Diagnostic time-loss on a misleading "port is already allocated" Docker error
+
+Full per-defect write-up in `docs/ai-integration-log.md` § Step 5. The pattern across all four: contract drift between the README's advertised paths and the code — none unit-testable, all caught only by smoke-running the advertised paths.
+
+**Implication for §3 ("What didn't")**: an additional item belongs in the friction list — *the test suite verifies code correctness; it cannot verify that advertised user paths work.* Smoke-running every advertised path before declaring "complete" is a category of work that needs to be on the per-epic verification matrix in any future BMAD-driven project. The §6 takeaway about plan-vs-reality drift applies equally to README-vs-code drift.
+
+The deferred-work backlog and "project genuinely complete" verdict in §8 are unchanged — the four defects were fixed same-day, no new items added to deferred-work.

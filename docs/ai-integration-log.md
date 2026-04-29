@@ -294,3 +294,62 @@ None invoked. The work was straightforward enough that direct file edits + bash 
 | Security review | ✓ PASS with patch list (`docs/qa/security.md`); 11 High / ~15 Medium / ~14 Low after triage; no exploitable critical for v1 profile |
 | Security patches applied (option A sweep) | ✓ 22 patches across 13 files; 68 tests pass; api coverage 90.3% / 79.5%; live stack smoke test all-green |
 | Post-sweep cleanup pass | ✓ Playwright e2e against patched prod stack 8/8 green (after fixing pre-existing hardcoded URLs in `a11y.spec.ts`); dev overlay `depends_on` bug fixed (api healthcheck disabled but web required `service_healthy` — web could never start); api hot-reload confirmed via tsx-watch SIGTERM/restart on file change; architecture.md § 11 reworded to qualify the non-root requirement; L11 marked verified; README documents `BIND_HOST` and `API_PORT`; H6 "bigger fix" (separate migration role) added to deferred-work; transient `security-review-diff.patch` removed (reproducible from `git diff`) |
+
+---
+
+## Step 5 — Post-shipping defects (2026-04-29, same-day)
+
+After the project retrospective was filed (`_bmad-output/implementation-artifacts/project-retrospective-2026-04-29.md`), exercising the README's local-dev path and the dev overlay end-to-end surfaced **four latent defects** that the E5 verification matrix did not catch. All four were fixed and committed the same day. Recording them here because the pattern matters: every advertised path needs a fresh smoke test, not just the path that was being walked during development.
+
+### 5.1 — Dev overlay merged port lists instead of replacing them
+**Symptom:** `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` failed with `Bind for 127.0.0.1:8080 failed: port is already allocated`. `lsof` and `netstat` showed nothing on 8080. A standalone `docker run -p 127.0.0.1:8080:8080 alpine` succeeded — the daemon could bind 8080. The error was misleading.
+
+**Root cause:** Compose **merges** ports lists when overlays add to a service that already has a `ports:` entry. Base `docker-compose.yml` mapped `web` to `${WEB_PORT:-8080}:80` (nginx). The dev overlay ALSO mapped `web` to `${WEB_PORT:-8080}:5173` (vite). The merge produced two host bindings on the same port for the same container — the first allocation succeeded, the second failed. The error message blamed the host port, but the conflict was internal to the container's port table.
+
+**Fix:** `ports: !override` directive in the dev overlay's web service so the list is replaced, not merged. Compose 2.20+. Commit `1558cd6`.
+
+**Lesson:** the prior cleanup (commit `2f3388a`) fixed a `depends_on` bug that prevented web from starting at all. Once web could start, this latent ports-merge bug surfaced — the previous bug was masking it. **One fix exposing the next** is a classic post-completion pattern.
+
+### 5.2 — Local-dev `.env` was never loaded by the api
+**Symptom:** `npm run -w @bmad-todo/api dev` failed with `invalid environment: DATABASE_URL: Required`, even with `.env` present at the repo root.
+
+**Root cause:** The api reads `process.env` directly with no `dotenv` loader. Compose works because `environment:` blocks inject vars into the container. Local-dev never had a loader. The README's local-dev section claimed the workflow worked; it did not.
+
+**Fix:** Added `--env-file-if-exists=../../.env` to the `dev` and `db:migrate` scripts in `packages/api/package.json`. Node 24's flag, tolerates missing file, so it's a no-op when running inside the dev overlay (which has env from Compose). Commits `1558cd6` (initial) and `477133c` (flag-order fix — `tsx watch` is a subcommand, Node flags forwarded by tsx must come *after* `watch`, otherwise `watch` is interpreted as the script path).
+
+**Lesson:** the architecture explicitly chose "no dotenv runtime dep" — but the local-dev path needed *some* env-loading mechanism. The architectural choice was right; the README claimed something the code didn't deliver. **Architectural decisions need at least one verified path that exercises them per environment** (Compose: ✓; local-dev: missed).
+
+### 5.3 — `CORS_ORIGIN` was single-origin, not a list
+**Symptom:** SPA at `http://192.168.0.233:5173` (vite's "Network" URL — what vite shows by default alongside the localhost URL) fetched the api at `localhost:3000` and got blocked: `Access-Control-Allow-Origin: http://localhost:8080` didn't match the request's origin.
+
+**Root cause:** `env.ts` validated `CORS_ORIGIN` as a single string. Default was `http://localhost:8080` (matches the prod nginx port). The README claimed the local-dev path "(CORS allows it)" — false: vite is on `:5173`, default allowlist was `:8080`. Anyone accessing via vite's Network URL was double-blocked.
+
+**Fix:** `env.ts` now parses `CORS_ORIGIN` as a comma-separated list, validates each entry individually (regex + wildcard rejection unchanged), exports `string[]`. `@fastify/cors` accepts an array natively, so `app.ts` is unchanged. `.env.example` seeds `http://localhost:8080,http://localhost:5173` as the typical dev allowlist. Two new tests cover the multi-origin path. Commit `5c506fa`.
+
+**Lesson:** every NFR-level constraint ("single origin only") that ships as `string` will eventually need to be a list. **The cost of `string | string[]` upfront is one Zod transform; the cost of changing it later is a coordinated edit across env, config, plugin call, tests, and docs.** That said, doing it eagerly is also a YAGNI smell — the right policy is probably "ship `string` if there's no current list use case, and budget the migration when the second use case appears."
+
+### 5.4 — Diagnostic chase on a misleading Docker error
+**Not a defect, but a recorded time-loss pattern.** The `Bind for 127.0.0.1:8080 failed: port is already allocated` message in 5.1 sent the investigation toward "what's holding the port" — `lsof`, `netstat`, container scans, prune commands, even bind-host swaps. None of that helped because nothing external was holding the port; the container was double-binding to itself. The fix only became visible after re-reading both compose files side-by-side.
+
+**Lesson:** when a Docker error surface implicates the *host* (port allocation, network, etc.) but host inspection turns up nothing, the next hypothesis should be **the container's own port table**, not "stale Docker state" — which is the seductive misdirection because it's plausible and untestable. Pattern: `docker compose config` resolves overlays into the merged service definition; reading the resolved `ports:` list there is the fastest way to spot a double-bind.
+
+### Cumulative defect count (Epic E1–E5 declared complete → Step 5 close-out)
+
+| Defect | Found by | Severity | Fix commit |
+|---|---|---|---|
+| Dev overlay `depends_on: service_healthy` with disabled api healthcheck | Post-sweep manual run | Medium | `2f3388a` (predates Step 5) |
+| Dev overlay ports-list merge (web double-binds host port) | Step 5 dev-overlay smoke | Medium | `1558cd6` |
+| Local-dev script doesn't load `.env` | Step 5 local-dev smoke | Medium | `1558cd6` + `477133c` |
+| `CORS_ORIGIN` single-origin only | Step 5 LAN-URL access from browser | Low / Medium (UX, not security) | `5c506fa` |
+
+**Pattern across all four:** none were caught by the test suite or the security review because none of them are *unit-testable defects* — they're contract drift between (a) the README's advertised paths and (b) the actual code. **Smoke-running every advertised path is a category of work that the test suite cannot replace.** Add this as a permanent post-completion checklist item in any future BMAD-driven project, alongside the existing per-epic verification matrix.
+
+### Step 5 verification (run on 2026-04-29)
+
+| Check | Result |
+|---|---|
+| Dev overlay (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up`) | ✓ all three services healthy; SPA on `:8080`, api on `:3000`, hot-reload working |
+| Local-dev path (`npm run -w @bmad-todo/api dev` + `npm run -w @bmad-todo/web dev`) | ✓ env loaded from `.env`; api connects to host Postgres; SPA hits api with no CORS rejection |
+| `npm run -w @bmad-todo/api typecheck` | ✓ clean |
+| Updated env unit tests (`tests/unit/env.test.ts`) | ✓ 10/10 (8 prior + 2 new for multi-origin) |
+| README local-dev section reflects what actually works | ✓ |

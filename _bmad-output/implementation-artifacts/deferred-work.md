@@ -76,17 +76,18 @@ These are the **Low** items from `docs/qa/security.md` that are real but explici
   *Why deferred:* Pure operational concern — no code change. Not relevant on a developer laptop.
   *When to reconsider:* when the stack lives on a shared or production host.
 
-- **TODO — Trim leading/trailing whitespace check verification on shared schema** *(was L11)*
-  *What:* Read `packages/shared/src/todo.ts` to confirm `CreateTodoSchema` uses `z.string().trim().min(1).max(500)` (the client trims; the server schema must trim before length validation to avoid divergence on a 500-char input plus whitespace). If it doesn't, add `.trim()`.
-  *Why deferred:* Five-minute verification, but doing it after the H1–H11 patch sweep avoids merging two unrelated diffs.
-  *When to reconsider:* during the patch sweep for the High findings.
+- ~~**TODO — Trim leading/trailing whitespace check verification on shared schema** *(was L11)*~~
+  ✅ **Resolved 2026-04-29 — already aligned.** Verified during the patch sweep: `packages/shared/src/todo.ts` defines `CreateTodoSchema` as `z.string().trim().min(1).max(500)`, and the integration test at `packages/api/tests/integration/todos.test.ts:58` ("trims whitespace from text") asserts the behavior. No action needed.
 
 - **TODO — Trailing newline on migration metadata files** *(was L12)*
   *What:* Add a final newline to `packages/api/src/db/migrations/meta/0000_snapshot.json` and `packages/api/src/db/migrations/meta/_journal.json`.
   *Why deferred:* Cosmetic. Some linters complain.
   *When to reconsider:* if a pre-commit hook starts enforcing trailing newlines.
 
-- **TODO — Update architecture.md § 11 to qualify the non-root requirement** *(spec deviation, no code change)*
-  *What:* The architecture text reads "Run as a non-root user (`USER node` for api, `USER nginx` for web)" without qualification. The actual posture defers `USER nginx` (see D1). Either lift the deferral or reword the architecture to "where possible" to match. The Acceptance Auditor flagged this in the security review as "Deferred-but-load-bearing" because of the unconditional spec language.
-  *Why deferred:* Doc fix, not a code fix. Bundle with the next architecture amendment cycle.
-  *When to reconsider:* same time D1 is reconsidered, so the doc and code move together.
+- ~~**TODO — Update architecture.md § 11 to qualify the non-root requirement** *(spec deviation, no code change)*~~
+  ✅ **Resolved 2026-04-29.** Architecture § 11 amended in commit a0421ef's follow-up: the bullet now reads "Run as a non-root user where possible (`USER node` is set on the api runtime; the web runtime uses the upstream `nginx:alpine` image whose master starts as root and forks workers as `nginx` — switching the master to non-root requires re-binding off port 80, deferred per … D1)." Spec and code now agree.
+
+- **TODO — Move migrations to a separate init container with a least-privilege DB user** *(was H6 "bigger fix" from the E5-S4 security review)*
+  *What:* The advisory-lock fix landed in commit a0421ef makes migrations safe under concurrent api boots, but the runtime DB user still has full DDL rights forever. The bigger fix is a separate compose service (or init container) that runs migrations using a dedicated `migrator` Postgres role with `CREATE`/`ALTER` on the `todos` schema, while the runtime api uses a DML-only `app` role. Two roles, two grants, one extra compose service.
+  *Why deferred:* Real defense-in-depth, but for v1 single-replica single-host single-user the advisory lock is sufficient; the additional plumbing (two DB roles, one extra service in compose, a migration ordering rule) costs more than the marginal risk it offsets.
+  *When to reconsider:* same trigger as D1/D6 — first multi-tenant or internet-reachable deployment, or the moment the api scales horizontally.

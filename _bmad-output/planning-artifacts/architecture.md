@@ -398,8 +398,8 @@ Migrations run automatically when the api starts (`drizzle-kit migrate`) so `doc
 
 Both app images:
 - Multi-stage (deps → build → runtime).
-- Run as a non-root user (`USER node` for api, `USER nginx` for web).
-- Drop capabilities, read-only root filesystem where possible.
+- Run as a non-root user where possible (`USER node` is set on the api runtime; the web runtime uses the upstream `nginx:alpine` image whose master starts as root and forks workers as `nginx` — switching the master to non-root requires re-binding off port 80, deferred per `_bmad-output/implementation-artifacts/deferred-work.md` D1).
+- Drop capabilities, read-only root filesystem where possible (deferred for v1; see D1).
 - Healthcheck declared in the Dockerfile and re-asserted in compose.
 
 ## 12. ADRs

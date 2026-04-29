@@ -37,6 +37,12 @@ services:
       - ./packages/web/index.html:/app/packages/web/index.html
       - ./packages/web/vite.config.ts:/app/packages/web/vite.config.ts
       - ./packages/shared/src:/app/packages/shared/src
+    # Override the prod `condition: service_healthy` because the dev overlay
+    # disables the api healthcheck (Dockerfile.dev lacks `wget`), and a missing
+    # healthcheck makes `service_healthy` unreachable — web would never start.
+    depends_on:
+      api:
+        condition: service_started
     # Vite dev server has no /healthz; disable the prod healthcheck.
     healthcheck:
       disable: true

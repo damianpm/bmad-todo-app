@@ -57,7 +57,7 @@ Three parallel reviewers, each at the same model capability as the orchestrator 
 
 After dedupe across the three layers (high overlap on CORS validation, body limits, request-id reflection, container hardening): ~36 unique findings, classified below.
 
-The diff under review (`_bmad-output/implementation-artifacts/security-review-diff.patch`) is preserved alongside this report.
+The exact diff under review can be reproduced with: `git diff f945974..1b4cafa -- 'packages/api/src/**' 'packages/web/nginx.conf' 'packages/web/Dockerfile*' 'packages/api/Dockerfile*' 'docker-compose*.yml' 'packages/web/src/api/**' 'packages/web/src/hooks/**' 'packages/web/src/components/**' 'packages/web/src/App.tsx' 'packages/web/src/main.tsx' '.env.example' '.dockerignore' 'scripts/test-persistence.sh'`.
 
 ---
 
@@ -242,7 +242,7 @@ Already filed as **F3** in `deferred-work.md`.
 - **L8.** No `frame-ancestors 'none'` in CSP *(blind)* — XFO covers it on every browser that matters; folded into M5's CSP tightening.
 - **L9.** `db_data` volume has no documented backup or encryption-at-rest *(edge)* — operational concern; not a code issue.
 - **L10.** `scripts/test-persistence.sh` MARKER logged unescaped *(edge)* — script-only, no risk in v1.
-- **L11.** AddTodoForm trims client-side; verify shared schema also trims *(blind)* — Inspect `@todo-app/shared` `CreateTodoSchema`. If it uses `z.string().trim().min(1).max(500)`, this is already aligned. Quick verification ticket.
+- **L11.** ~~AddTodoForm trims client-side; verify shared schema also trims~~ *(blind)* — **Verified 2026-04-29.** `packages/shared/src/todo.ts` defines `CreateTodoSchema` as `z.string().trim().min(1).max(500)` and the integration test "trims whitespace from text" exercises it (`packages/api/tests/integration/todos.test.ts:58`). Already aligned, no fix needed.
 - **L12.** Trailing-newline missing on two migration metadata files *(blind)* — cosmetic.
 - **L13.** Postgres container default UID *(edge)* — folded into D1.
 - **L14.** Playwright e2e image runs as root *(edge)* — test image only, no production reach.

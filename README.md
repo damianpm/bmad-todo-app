@@ -11,11 +11,13 @@ The product surface is intentionally small (list / add / toggle / delete). The r
 Requires Docker (29+) and Docker Compose v2.
 
 ```bash
-cp .env.example .env       # set POSTGRES_PASSWORD if you want something other than the default
+cp .env.example .env       # then edit POSTGRES_PASSWORD — the example ships a placeholder
 docker compose up --build
 ```
 
 Open <http://localhost:8080>. The browser only ever talks to the `web` container; nginx reverse-proxies `/api/*` to the `api` service on the internal network.
+
+By default the published port is bound to `127.0.0.1` only — the dev stack is not reachable from your LAN. To expose it (e.g. testing from another device), set `BIND_HOST=0.0.0.0` before `compose up`. Same applies to the api port published by the dev overlay.
 
 Tear down (preserve data):
 
@@ -136,10 +138,20 @@ See [`.env.example`](./.env.example). Compose reads `.env` from the project root
 | `POSTGRES_USER` | db | yes | `todos` | |
 | `POSTGRES_PASSWORD` | db | yes | — | gitignored via `.env` |
 | `WEB_PORT` | compose | no | `8080` | host port mapped to nginx |
+| `API_PORT` | compose (dev overlay) | no | `3000` | host port mapped to api in the dev overlay |
+| `BIND_HOST` | compose | no | `127.0.0.1` | host interface to bind published ports to. Set to `0.0.0.0` to expose on the LAN |
 
 ### Migrations run on every `up`
 
 `packages/api/src/server.ts` calls `runMigrations()` before `app.listen()` (architecture ADR-5), so every `docker compose up` brings the schema to the latest version. Drizzle migrations are idempotent — applying them against an already-migrated database is a no-op. Worth knowing in two cases: (a) when pointing the api at a database it doesn't own, and (b) when investigating a slow first-request after a fresh `up`.
+
+---
+
+## Security posture
+
+Hardening applied in commit `a0421ef` (E5-S4): bounded `/todos` pagination, sanitized validation errors, server-only request IDs, postgres pool timeouts, advisory-lock-protected migrations, postgres URL redaction in startup logs, HSTS + tightened CSP at nginx, dotfile/source-map deny rules, `/api/healthz` locked to in-container loopback, method allow-list, X-Forwarded-For overwrite, fail-fast on missing `VITE_API_BASE_URL` in production builds, localhost-only port bindings by default. Full review and triage in [`docs/qa/security.md`](./docs/qa/security.md); accepted-and-deferred items in [`_bmad-output/implementation-artifacts/deferred-work.md`](./_bmad-output/implementation-artifacts/deferred-work.md).
+
+Out of scope for v1 per NFR-11 and explicitly flagged: authentication, authorization, CSRF, multi-tenant isolation. Revisit on the first shared/internet-reachable deployment.
 
 ---
 

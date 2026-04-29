@@ -13,6 +13,7 @@ COPY packages/api/package.json packages/api/
 COPY packages/web/package.json packages/web/
 
 # Install dev deps too — vite, @vitejs/plugin-react, typescript are needed to build.
+# --ignore-scripts: supply-chain hardening, see comment in packages/api/Dockerfile.
 RUN npm ci --workspaces --include-workspace-root --ignore-scripts
 
 COPY packages/shared/tsconfig.json packages/shared/
@@ -37,4 +38,4 @@ COPY --from=build /app/packages/web/dist /usr/share/nginx/html
 EXPOSE 80
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
-    CMD wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1
+    CMD wget -qO- http://127.0.0.1/api/healthz >/dev/null 2>&1 || exit 1

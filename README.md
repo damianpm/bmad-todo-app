@@ -70,9 +70,16 @@ Source is bind-mounted; `tsx watch` and `vite` pick up changes.
 ### E2E against the containerized stack
 
 ```bash
+mkdir -p packages/web/test-results packages/web/playwright-report
 docker compose -f docker-compose.yml -f docker-compose.test.yml \
   up --build --abort-on-container-exit --exit-code-from e2e
 ```
+
+Why those flags matter:
+
+- `--abort-on-container-exit` tears the whole stack down the moment any service exits, so the run doesn't hang after Playwright finishes.
+- `--exit-code-from e2e` makes Compose return the `e2e` container's exit code as its own. Without it, a failed test suite still produces a successful `compose up`, which is silently wrong in CI.
+- `mkdir -p ...` ahead of time means Docker doesn't create the bind-mount targets root-owned (which makes them painful to clean up afterwards).
 
 Reports land in `packages/web/playwright-report/` and `packages/web/test-results/`.
 
@@ -119,7 +126,7 @@ See [`.env.example`](./.env.example). Compose reads `.env` from the project root
 
 | Var | Service | Required | Default | Purpose |
 |---|---|---|---|---|
-| `DATABASE_URL` | api | yes | — | Postgres connection string |
+| `DATABASE_URL` | api | yes | — | Postgres connection string. **In Compose this is constructed automatically from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`** — you don't set it directly. Set it manually only when running the api outside Compose. |
 | `PORT` | api | no | `3000` | api listen port |
 | `LOG_LEVEL` | api | no | `info` | pino level |
 | `CORS_ORIGIN` | api | no | `http://localhost:8080` | allowlisted origin |
@@ -129,6 +136,10 @@ See [`.env.example`](./.env.example). Compose reads `.env` from the project root
 | `POSTGRES_USER` | db | yes | `todos` | |
 | `POSTGRES_PASSWORD` | db | yes | — | gitignored via `.env` |
 | `WEB_PORT` | compose | no | `8080` | host port mapped to nginx |
+
+### Migrations run on every `up`
+
+`packages/api/src/server.ts` calls `runMigrations()` before `app.listen()` (architecture ADR-5), so every `docker compose up` brings the schema to the latest version. Drizzle migrations are idempotent — applying them against an already-migrated database is a no-op. Worth knowing in two cases: (a) when pointing the api at a database it doesn't own, and (b) when investigating a slow first-request after a fresh `up`.
 
 ---
 

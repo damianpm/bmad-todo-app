@@ -16,6 +16,11 @@ services:
       - ./packages/api/src:/app/packages/api/src
       - ./packages/api/drizzle.config.ts:/app/packages/api/drizzle.config.ts
       - ./packages/shared/src:/app/packages/shared/src
+    # Dockerfile.dev does not install `wget`, so the prod healthcheck would loop
+    # forever and mark the container unhealthy. Disable it in dev — `tsx watch`
+    # already crashes loudly on errors.
+    healthcheck:
+      disable: true
     command: ["npx", "tsx", "watch", "src/server.ts"]
 
   web:

@@ -8,6 +8,14 @@ const databaseUrl =
 // the api/web servers are already up — skip Playwright's `webServer` boot.
 const useExternalStack = process.env.E2E_EXTERNAL_STACK === "1";
 
+// In external-stack mode the dev-server fallback (localhost:5173) is meaningless;
+// fail loudly instead of silently aiming the suite at the wrong port.
+if (useExternalStack && !process.env.PLAYWRIGHT_BASE_URL) {
+  throw new Error(
+    "E2E_EXTERNAL_STACK=1 requires PLAYWRIGHT_BASE_URL to be set (e.g. http://web).",
+  );
+}
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,

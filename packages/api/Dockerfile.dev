@@ -10,6 +10,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/api/package.json packages/api/
 COPY packages/web/package.json packages/web/
 
+# --ignore-scripts: supply-chain hardening, see comment in packages/api/Dockerfile.
 RUN npm ci --workspaces --include-workspace-root --ignore-scripts
 
 WORKDIR /app/packages/api

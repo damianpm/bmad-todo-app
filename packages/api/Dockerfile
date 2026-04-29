@@ -9,6 +9,9 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/api/package.json packages/api/
 COPY packages/web/package.json packages/web/
 
+# --ignore-scripts: skip postinstall/prepare hooks for supply-chain hardening.
+# Verified: this project's deps (drizzle-orm, pg, fastify, react, vite, ...) do
+# not require any postinstall steps to function.
 RUN npm ci --omit=dev --workspaces --include-workspace-root --ignore-scripts
 
 # ---- runtime stage ----

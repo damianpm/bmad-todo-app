@@ -6,7 +6,20 @@ import {
   ApiErrorSchema,
 } from "@bmad-todo/shared";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
+function resolveBaseUrl(): string {
+  const v = import.meta.env.VITE_API_BASE_URL;
+  if (v) return v;
+  if (import.meta.env.PROD) {
+    throw new Error(
+      "VITE_API_BASE_URL must be set at build time for production builds",
+    );
+  }
+  return "http://localhost:3000";
+}
+
+const BASE_URL = resolveBaseUrl();
+
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export class ApiClientError extends Error {
   readonly status: number;
@@ -29,18 +42,24 @@ async function request<T>(
   if (init.body !== undefined && init.body !== null) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => null);
-    const parsed = ApiErrorSchema.safeParse(errBody);
-    if (parsed.success) {
-      throw new ApiClientError(res.status, parsed.data.error, parsed.data.code, parsed.data.message);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, { ...init, headers, signal: ctrl.signal });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => null);
+      const parsed = ApiErrorSchema.safeParse(errBody);
+      if (parsed.success) {
+        throw new ApiClientError(res.status, parsed.data.error, parsed.data.code, parsed.data.message);
+      }
+      throw new ApiClientError(res.status, "unknown_error", "client.unknown", `HTTP ${res.status}`);
     }
-    throw new ApiClientError(res.status, "unknown_error", "client.unknown", `HTTP ${res.status}`);
+    if (res.status === 204) return parse(undefined);
+    const data = await res.json();
+    return parse(data);
+  } finally {
+    clearTimeout(timer);
   }
-  if (res.status === 204) return parse(undefined);
-  const data = await res.json();
-  return parse(data);
 }
 
 export async function listTodos(): Promise<Todo[]> {

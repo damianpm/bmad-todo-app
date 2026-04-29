@@ -44,7 +44,10 @@ services:
         VITE_API_BASE_URL: /api
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-8080}:80"
+      # Bind to 127.0.0.1 by default so a developer on a Wi-Fi network does not
+      # accidentally expose the dev stack to the LAN. Set BIND_HOST=0.0.0.0 to
+      # opt in to LAN access (e.g. testing from another device).
+      - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-8080}:80"
     depends_on:
       api:
         condition: service_healthy

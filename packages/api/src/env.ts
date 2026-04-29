@@ -8,7 +8,14 @@ const EnvSchema = z.object({
     .transform((v) => Number.parseInt(v, 10))
     .pipe(z.number().int().positive()),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-  CORS_ORIGIN: z.string().default("http://localhost:8080"),
+  CORS_ORIGIN: z
+    .string()
+    .default("http://localhost:8080")
+    .refine((v) => v !== "*", "wildcard origin disallowed; set an explicit origin")
+    .refine(
+      (v) => /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(v),
+      "must be a valid origin like http://host or https://host:port",
+    ),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
 

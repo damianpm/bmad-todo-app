@@ -237,11 +237,29 @@ None invoked. The work was straightforward enough that direct file edits + bash 
 
 #### E5-S3 — Lighthouse perf audit
 
-- **Deferred.** Architecture's "Lighthouse via Chrome DevTools MCP" pathway requires that MCP server to be enabled in the session. Not enabled when this step ran. To complete: enable Chrome DevTools MCP, run a Lighthouse audit against `http://localhost:8080`, capture the numbers in `docs/qa/performance.md`. NFR-3 (TTI < 2s on a mid-range laptop) is the gate.
+- **Done.** Full report in `docs/qa/performance.md`; raw JSON + HTML in `docs/qa/lighthouse*.report.*`.
+- **Result (unthrottled host loopback):** Performance 100 / Accessibility 100 / Best-Practices 100. TTI 57 ms, TBT 0 ms, CLS 0. Host benchmarkIndex 4064 (Lighthouse "mid-range desktop" reference ≈1000) — even normalized for the slower target machine, TTI lands ~10× under the 2 s NFR-3 gate. **NFR-3: PASS.**
+- **Result (lab simulate, default Slow 4G + 1× CPU):** Performance 72, TTI 2.6 s, TBT 0 ms. Recorded as a regression boundary; **not** the NFR-3 number. Simulate's dependency-graph latency model floors TTI ≈2.6 s for any tiny SPA regardless of CPU multiplier (a 4× CPU pass produced an identical 2552 ms TTI), and TBT = 0 confirms the figure is not driven by real main-thread work.
+- **MCP finding (load-bearing):** Architecture planned this audit through the Chrome DevTools MCP. The MCP server (`chrome-devtools-mcp`) was installed mid-session and showed Connected in `claude mcp list`, but its tools did not register in the live session — same lifecycle limitation Step 1 documented for skills. Worked around with `npx lighthouse@13.1.0` directly; output is the same JSON/HTML the MCP would emit. **Confirmed on a `/clear`-restarted session (2026-04-29):** MCP tools register on a fresh session, the architected pathway works end-to-end. Re-run produced LCP 70 ms (CDP `performance_start_trace`) and A11y 100 / BP 100 / SEO 91 (MCP `lighthouse_audit`) — same NFR-3 PASS verdict as the npx fallback.
+- **MCP pathway is two calls, not one:** the MCP `lighthouse_audit` tool *excludes* performance by design (its docstring directs callers to `performance_start_trace`). The architecture's "Lighthouse via Chrome DevTools MCP" is actually `performance_start_trace` (LCP/CLS/INP) + `lighthouse_audit` (a11y/best-practices/SEO). Worth noting in the playbook.
+- **MCP filename quirk:** `performance_start_trace` appends `.json.gz` to whatever `filePath` you pass. Requesting `cdp-trace.json.gz` produced `cdp-trace.json.json.gz` on disk. Pass the bare basename (e.g. `cdp-trace`) or rename after.
+- **New SEO finding via MCP-pathway run:** `robots-txt` invalid (drops SEO 100 → 91). Cause: nginx SPA fallback returns `index.html` for `/robots.txt`. Honest finding, not a blocker for an internal app; fix is a static `web/public/robots.txt`. The npx-lighthouse run did not surface it because `--only-categories=performance,accessibility,best-practices` excluded SEO.
+- **Bug found in user MCP config:** the locally-configured `chrome-devtools` server pointed at `npx @modelcontextprotocol/server-chrome-devtools`, which is a 404 on npm. Fixed in `~/.claude.json` (project-scoped) to `npx -y chrome-devtools-mcp@latest`. Server now connects.
 
 #### E5-S4 — Security review
 
-- **Deferred.** Plan is to invoke `bmad-code-review` against the recent diff (api error handling, Drizzle parametrization, CORS, nginx proxy, secrets-in-env). Findings will land in `docs/qa/security.md`.
+- **Done.** Full report in `docs/qa/security.md`; raw diff under review in `_bmad-output/implementation-artifacts/security-review-diff.patch`.
+- **Method:** `bmad-code-review` with three parallel adversarial layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) all on Opus 4.7 with isolated context. Diff scope: commits f945974..1b4cafa, security-relevant slice only (api source, web client/api, nginx.conf, Dockerfiles, docker-compose*.yml, .env.example, SQL migrations) — 39 files / 1,613 lines.
+- **Verdict:** PASS with patch list. **No exploitable critical issues** for the v1 deployment profile (single-user, internal). The hardening posture is consistent with NFR-11's stated v1 scope ("no auth in v1; CORS restricted to configured origin").
+- **Findings:** ~36 unique after dedupe across the three layers. 11 High (info-disclosure / availability / unbounded surface), ~15 Medium (defense-in-depth), ~14 Low (mostly already deferred or cosmetic). Six new entries appended to `_bmad-output/implementation-artifacts/deferred-work.md` under "Deferred from: code review of E5-S4 security review (2026-04-29)".
+- **Out-of-scope-per-NFR-11 callouts:** Blind Hunter raised auth, CSRF, and tenant model as Critical/High. Acceptance Auditor correctly classified them as explicit non-goals for v1. Documented in security.md under "Out of scope per spec — flagged for future revisits" so the next reviewer (post-auth) can pick up the trail.
+- **Three-layer parallel review observations:**
+  - **Spec-aware Auditor was the most load-bearing layer** for distinguishing real gaps from intentional v1 trade-offs. Without it, ~15 findings would have read as Critical/High that NFR-11 explicitly accepts.
+  - **Blind Hunter (no project context)** caught the "what's missing" framing — auth, CSRF, HSTS, digest-pinning. Even when those land in the out-of-scope bucket, surfacing them in this review's record means the next-epic reviewer doesn't have to re-derive them.
+  - **Edge Case Hunter (path tracer)** owned the timeout and reflection findings (pg.Pool timeouts, Fastify timeouts, shutdown timeout, x-request-id reflection, healthcheck timeout) — these are mechanical findings the prose-driven reviewers missed.
+  - All three returned in 100–110 s. No subagent failures.
+- **Architecture spec deviation flagged:** Architecture § 11 unconditionally requires `USER nginx` on the web container; the current image defers to D1. Either lift the deferral or reword the architecture to match. Added as a doc-fix entry in `deferred-work.md`.
+- **Patch sweep (option A) — DONE (2026-04-29):** All 11 High and 11 actionable Medium findings applied in a single pass (M10/M12 already deferred per D7/F3). 22 patches across 13 files: `app.ts`, `env.ts`, `db/client.ts`, `db/migrate.ts`, `server.ts`, `log-redact.ts` (new), `routes/todos.ts`, `routes/health.ts`, `web/src/api/client.ts`, `nginx.conf`, `.env.example`, `docker-compose.yml`, `docker-compose.dev.yml`. Two new test files (`tests/unit/log-redact.test.ts`, four new env validation cases) raised api coverage to 90.3% line / 79.5% branch. Verification matrix: 68 tests pass, `nginx -t` clean, `docker compose up --build --wait` healthy, persistence script PASS, 9-case live curl smoke against the running stack — every assertion green. See `docs/qa/security.md` § "Patch sweep — what landed where" for the per-finding file list.
 
 #### E5-S5 — AI integration log finalization
 
@@ -253,7 +271,8 @@ None invoked. The work was straightforward enough that direct file edits + bash 
 
 ### What AI didn't / couldn't do well in Step 4
 
-- **Run Lighthouse without an MCP server.** Even with a running stack and a reachable port, there is no built-in audit tool — requires either Chrome DevTools MCP or a manual `npx lighthouse` run + JSON capture.
+- **Run Lighthouse without an MCP server or external CLI.** Even with a running stack and a reachable port, there is no built-in audit tool — requires either Chrome DevTools MCP or a manual `npx lighthouse` run + JSON capture. Both pathways were exercised this step; both produce the same NFR-3 PASS verdict.
+- **Use a freshly-installed MCP server in the session that installed it.** MCP tools register at session start; a mid-session `claude mcp add` shows "Connected" but the tools don't dispatch until `/clear` (or a session restart). Same lifecycle as skill registration. Workaround pattern: install MCP → `/clear` → use.
 - **Self-evaluate security.** I can run `bmad-code-review`, but the value of an adversarial review depends on the reviewer being a different model run with a fresh window. A self-review tends to confirm what was just written.
 
 ### Where human expertise will be load-bearing in Step 4 (still ahead)
@@ -270,5 +289,7 @@ None invoked. The work was straightforward enough that direct file edits + bash 
 | axe-core critical violations on `/` | ✓ 0 (Step 2 result; not re-run, surface unchanged) |
 | `README.md` | ✓ committed |
 | AI integration log | ✓ Step 3 + Step 4 sections appended |
-| Lighthouse perf | ⏳ pending Chrome DevTools MCP |
-| Security review | ⏳ pending `bmad-code-review` invocation |
+| Lighthouse perf (npx fallback) | ✓ Perf 100 / A11y 100 / BP 100 unthrottled; TTI 57 ms vs 2 s NFR-3 gate (`docs/qa/performance.md`) |
+| Lighthouse perf (Chrome DevTools MCP, architected pathway) | ✓ LCP 70 ms / CLS 0 / A11y 100 / BP 100 / SEO 91 (`docs/qa/cdp-lighthouse/`, `docs/qa/cdp-trace.json.gz`); same NFR-3 PASS |
+| Security review | ✓ PASS with patch list (`docs/qa/security.md`); 11 High / ~15 Medium / ~14 Low after triage; no exploitable critical for v1 profile |
+| Security patches applied (option A sweep) | ✓ 22 patches across 13 files; 68 tests pass; api coverage 90.3% / 79.5%; live stack smoke test all-green |

@@ -25,13 +25,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
           : undefined,
     },
     genReqId: opts.generateRequestId ?? (() => randomUUID()),
-    requestIdHeader: "x-request-id",
+    // Always generate the request id server-side; never trust a client-supplied
+    // x-request-id header (header injection / log forging surface).
+    requestIdHeader: false,
     requestIdLogLabel: "reqId",
+    bodyLimit: 32 * 1024,
+    connectionTimeout: 10_000,
+    requestTimeout: 30_000,
+    keepAliveTimeout: 5_000,
   });
 
   await app.register(cors, {
     origin: opts.env.CORS_ORIGIN,
     methods: ["GET", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["content-type"],
+    credentials: false,
   });
 
   app.addHook("onSend", async (req, reply) => {
@@ -49,9 +57,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     }
     if (err instanceof ZodError) {
       const first = err.issues[0];
+      const field = first ? first.path.join(".") || "body" : "body";
       reply.code(400).send({
         error: "validation_error",
-        message: first ? `${first.path.join(".") || "body"}: ${first.message}` : "validation failed",
+        message: `invalid value for field: ${field}`,
         code: "request.invalid",
       });
       return;
@@ -62,10 +71,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       "validation" in err &&
       (err as { validation: unknown }).validation
     ) {
-      const e = err as { message?: string };
       reply.code(400).send({
         error: "validation_error",
-        message: e.message ?? "validation failed",
+        message: "validation failed",
         code: "request.invalid",
       });
       return;

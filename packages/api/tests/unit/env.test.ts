@@ -39,4 +39,30 @@ describe("loadEnv", () => {
       }),
     ).toThrow(/invalid environment/);
   });
+
+  it("rejects CORS_ORIGIN=*", () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: "postgres://u:p@localhost:5432/db",
+        CORS_ORIGIN: "*",
+      }),
+    ).toThrow(/wildcard origin disallowed/);
+  });
+
+  it("rejects malformed CORS_ORIGIN", () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: "postgres://u:p@localhost:5432/db",
+        CORS_ORIGIN: "not a url",
+      }),
+    ).toThrow(/valid origin/);
+  });
+
+  it("accepts CORS_ORIGIN with port", () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgres://u:p@localhost:5432/db",
+      CORS_ORIGIN: "https://app.example.com:8443",
+    });
+    expect(env.CORS_ORIGIN).toBe("https://app.example.com:8443");
+  });
 });

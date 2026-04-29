@@ -11,10 +11,24 @@ const EnvSchema = z.object({
   CORS_ORIGIN: z
     .string()
     .default("http://localhost:8080")
-    .refine((v) => v !== "*", "wildcard origin disallowed; set an explicit origin")
-    .refine(
-      (v) => /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(v),
-      "must be a valid origin like http://host or https://host:port",
+    .transform((v) =>
+      v
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    )
+    .pipe(
+      z
+        .array(
+          z
+            .string()
+            .refine((v) => v !== "*", "wildcard origin disallowed; set an explicit origin")
+            .refine(
+              (v) => /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(v),
+              "must be a valid origin like http://host or https://host:port",
+            ),
+        )
+        .nonempty("CORS_ORIGIN must contain at least one origin"),
     ),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });

@@ -19,7 +19,7 @@ describe("loadEnv", () => {
     const env = loadEnv({ DATABASE_URL: "postgres://u:p@localhost:5432/db" });
     expect(env.PORT).toBe(3000);
     expect(env.LOG_LEVEL).toBe("info");
-    expect(env.CORS_ORIGIN).toBe("http://localhost:8080");
+    expect(env.CORS_ORIGIN).toEqual(["http://localhost:8080"]);
     expect(env.NODE_ENV).toBe("development");
   });
 
@@ -63,6 +63,26 @@ describe("loadEnv", () => {
       DATABASE_URL: "postgres://u:p@localhost:5432/db",
       CORS_ORIGIN: "https://app.example.com:8443",
     });
-    expect(env.CORS_ORIGIN).toBe("https://app.example.com:8443");
+    expect(env.CORS_ORIGIN).toEqual(["https://app.example.com:8443"]);
+  });
+
+  it("accepts comma-separated CORS_ORIGIN values", () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgres://u:p@localhost:5432/db",
+      CORS_ORIGIN: "http://localhost:5173, http://192.168.0.233:5173",
+    });
+    expect(env.CORS_ORIGIN).toEqual([
+      "http://localhost:5173",
+      "http://192.168.0.233:5173",
+    ]);
+  });
+
+  it("rejects CORS_ORIGIN if any entry in the list is invalid", () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: "postgres://u:p@localhost:5432/db",
+        CORS_ORIGIN: "http://localhost:5173, not-a-url",
+      }),
+    ).toThrow(/valid origin/);
   });
 });

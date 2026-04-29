@@ -56,7 +56,7 @@ npm run -w @bmad-todo/api dev      # api on :3000
 npm run -w @bmad-todo/web dev      # SPA on :5173
 ```
 
-The Vite dev server reads `VITE_API_BASE_URL=http://localhost:3000` so the SPA hits the api directly (CORS allows it).
+The Vite dev server reads `VITE_API_BASE_URL=http://localhost:3000` so the SPA hits the api directly. `CORS_ORIGIN` is a comma-separated allowlist; the example covers `:8080` (prod nginx) and `:5173` (vite local). If you access the dev SPA from another device via the LAN URL vite prints, add that origin to the list and restart the api.
 
 ### Hot-reload via Compose
 
@@ -142,7 +142,7 @@ See [`.env.example`](./.env.example). Compose reads `.env` from the project root
 | `DATABASE_URL` | api | yes | — | Postgres connection string. **In Compose this is constructed automatically from `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`** — you don't set it directly. Set it manually only when running the api outside Compose. |
 | `PORT` | api | no | `3000` | api listen port |
 | `LOG_LEVEL` | api | no | `info` | pino level |
-| `CORS_ORIGIN` | api | no | `http://localhost:8080` | allowlisted origin |
+| `CORS_ORIGIN` | api | no | `http://localhost:8080` | comma-separated allowlist of origins (e.g. `http://localhost:8080,http://localhost:5173`) |
 | `NODE_ENV` | api | no | `development` | `production` in built image |
 | `VITE_API_BASE_URL` | web (build-time) | yes | `/api` (Compose) | base URL the SPA hits |
 | `POSTGRES_DB` | db | yes | `todos` | |

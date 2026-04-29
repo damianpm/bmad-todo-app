@@ -33,7 +33,7 @@ export async function startTestApp(): Promise<TestApp> {
       DATABASE_URL: databaseUrl,
       PORT: 0,
       LOG_LEVEL: "fatal",
-      CORS_ORIGIN: "http://localhost:8080",
+      CORS_ORIGIN: ["http://localhost:8080"],
       NODE_ENV: "test",
     },
   });

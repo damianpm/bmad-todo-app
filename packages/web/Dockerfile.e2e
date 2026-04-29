@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+# Image used by the docker-compose.test.yml overlay to run Playwright against
+# a fresh stack. Uses the official Playwright image (browsers preinstalled).
+FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/api/package.json packages/api/
+COPY packages/web/package.json packages/web/
+
+RUN npm ci --workspaces --include-workspace-root --ignore-scripts
+
+COPY packages/shared/tsconfig.json packages/shared/
+COPY packages/shared/src packages/shared/src
+
+COPY packages/web/tsconfig.json packages/web/
+COPY packages/web/playwright.config.ts packages/web/
+COPY packages/web/tests packages/web/tests
+COPY packages/web/src packages/web/src
+COPY packages/web/index.html packages/web/
+
+WORKDIR /app/packages/web
+ENV E2E_EXTERNAL_STACK=1 \
+    CI=1
+
+CMD ["npx", "playwright", "test"]

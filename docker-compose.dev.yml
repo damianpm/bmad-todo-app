@@ -1,0 +1,38 @@
+# Dev overlay: hot-reload api (tsx watch) and web (vite dev server).
+# Use:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-8080}
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - ./packages/api/src:/app/packages/api/src
+      - ./packages/api/drizzle.config.ts:/app/packages/api/drizzle.config.ts
+      - ./packages/shared/src:/app/packages/shared/src
+    command: ["npx", "tsx", "watch", "src/server.ts"]
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile.dev
+    environment:
+      VITE_API_BASE_URL: http://localhost:${API_PORT:-3000}
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${WEB_PORT:-8080}:5173"
+    volumes:
+      - ./packages/web/src:/app/packages/web/src
+      - ./packages/web/index.html:/app/packages/web/index.html
+      - ./packages/web/vite.config.ts:/app/packages/web/vite.config.ts
+      - ./packages/shared/src:/app/packages/shared/src
+    # Vite dev server has no /healthz; disable the prod healthcheck.
+    healthcheck:
+      disable: true
+    command: ["npx", "vite", "--host", "0.0.0.0", "--port", "5173"]

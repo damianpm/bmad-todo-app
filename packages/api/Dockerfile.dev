@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.7
+# Dev image for the api: installs all deps (incl. devDeps) so tsx watch can run.
+FROM node:24-alpine
+WORKDIR /app
+
+RUN apk add --no-cache wget
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/api/package.json packages/api/
+COPY packages/web/package.json packages/web/
+
+RUN npm ci --workspaces --include-workspace-root --ignore-scripts
+
+WORKDIR /app/packages/api
+EXPOSE 3000
+
+CMD ["npx", "tsx", "watch", "src/server.ts"]

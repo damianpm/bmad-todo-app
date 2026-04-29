@@ -1,0 +1,22 @@
+# Test overlay: brings up the prod stack and runs Playwright against it.
+# Use:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml \
+#     up --build --abort-on-container-exit --exit-code-from e2e
+services:
+  e2e:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile.e2e
+    environment:
+      PLAYWRIGHT_BASE_URL: http://web
+      E2E_API_BASE_URL: http://api:3000
+      E2E_EXTERNAL_STACK: "1"
+      CI: "1"
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./packages/web/test-results:/app/packages/web/test-results
+      - ./packages/web/playwright-report:/app/packages/web/playwright-report
